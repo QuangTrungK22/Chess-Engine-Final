@@ -213,7 +213,8 @@ class GameState:
                     self.current_castling_right.bks = False
 
     def get_valid_moves(self) -> List[Move]:
-        """Return all valid moves for the current game state."""
+        """
+        #Return all valid moves for the current game state.#
         moves = []
         self.in_check, self.pins, self.checks = self.check_for_pins_and_checks()
         king_row, king_col = (self.white_king_loc if self.white_to_move else self.black_king_loc)
@@ -243,7 +244,84 @@ class GameState:
             else:
                 self.stale_mate = True
         return moves
+    """
+    def get_valid_moves(self) -> List[Move]:
+        """
+        Trả về tất cả các nước đi hợp lệ cho trạng thái hiện tại của trò chơi.
+        Thứ tự thực hiện:
+        1. Xác định xem vua hiện tại có đang bị chiếu không, tìm các quân cờ đang ghim và các quân cờ đang chiếu.
+        2. Tạo tất cả các nước đi có thể (pseudo-legal moves) dựa trên trạng thái chiếu.
+           - Nếu đang bị chiếu: Chỉ có các nước đi giúp thoát chiếu (di chuyển vua, bắt quân chiếu, hoặc chặn đường chiếu) là hợp lệ.
+           - Nếu không bị chiếu: Tạo tất cả các nước đi pseudo-legal.
+        3. Nếu không có nước đi hợp lệ nào:
+           - Nếu đang bị chiếu: Đó là chiếu hết (checkmate).
+           - Nếu không bị chiếu: Đó là hết nước đi (stalemate - hòa cờ).
+        """
+        # self.in_check, self.pins, và self.checks được cập nhật bởi hàm này.
+        # self.pins là danh sách các quân cờ bị ghim và hướng ghim.
+        # self.checks là danh sách các quân cờ đang chiếu vua và hướng chiếu.
+        self.in_check, self.pins, self.checks = self.check_for_pins_and_checks()
 
+        king_row, king_col = self.white_king_loc if self.white_to_move else self.black_king_loc
+        
+        generated_moves = [] # Sẽ chứa các nước đi hợp lệ cuối cùng
+
+        if self.in_check:
+            if len(self.checks) == 1:  # Bị chiếu bởi một quân cờ duy nhất
+                # Lấy tất cả các nước đi pseudo-legal (các hàm con sẽ tự xử lý pin)
+                # Vua sẽ chỉ có các nước đi đến ô an toàn.
+                # Các quân khác nếu bị ghim sẽ bị hạn chế di chuyển.
+                possible_moves_when_checked = self.get_all_possible_moves()
+                
+                check = self.checks[0]  # Thông tin quân chiếu: (row, col, dir_x, dir_y từ vua đến quân chiếu)
+                checking_piece_row, checking_piece_col = check[0], check[1]
+                
+                # Xác định các ô mà một quân cờ (không phải vua) có thể di chuyển đến để hóa giải thế chiếu
+                # (bằng cách chặn đường hoặc bắt quân chiếu)
+                valid_squares_for_block_or_capture = []
+                if self.board[checking_piece_row][checking_piece_col][1] == 'N': # Nếu là Mã chiếu
+                    valid_squares_for_block_or_capture.append((checking_piece_row, checking_piece_col)) # Chỉ có thể bắt Mã
+                else: # Quân chiếu là quân trượt (Xe, Tượng, Hậu) hoặc Tốt
+                    # check[2] và check[3] là hướng từ vua đến quân chiếu
+                    for i in range(1, 8):
+                        block_or_capture_sq = (king_row + check[2] * i, king_col + check[3] * i)
+                        valid_squares_for_block_or_capture.append(block_or_capture_sq)
+                        if block_or_capture_sq == (checking_piece_row, checking_piece_col): # Đã đến vị trí quân chiếu
+                            break
+                
+                # Lọc các nước đi:
+                for move in possible_moves_when_checked:
+                    if move.piece_move[1] == 'K': # Nước đi của Vua (đã được _get_king_moves kiểm tra an toàn)
+                        generated_moves.append(move)
+                    else: # Nước đi của quân khác
+                        # Quân này phải di chuyển đến một ô trong valid_squares_for_block_or_capture
+                        # Hoặc nó đang bắt quân cờ đang chiếu (nếu nước đi là nước bắt quân)
+                        if (move.end_row, move.end_col) in valid_squares_for_block_or_capture:
+                            generated_moves.append(move)
+            else:  # Bị chiếu đôi (hoặc nhiều hơn)
+                # Chỉ có nước đi của Vua là hợp lệ.
+                # _get_king_moves sẽ thêm các nước đi hợp lệ của vua vào generated_moves.
+                self._get_king_moves(king_row, king_col, generated_moves)
+        else:  # Không bị chiếu
+            # Lấy tất cả các nước đi pseudo-legal.
+            # Các nước nhập thành cũng được tạo trong self.get_all_possible_moves() (thông qua _get_king_moves)
+            # và _get_castle_moves đã tự kiểm tra điều kiện không bị chiếu.
+            generated_moves = self.get_all_possible_moves()
+
+        # Sau khi có danh sách các nước đi hợp lệ (generated_moves),
+        # xác định trạng thái chiếu hết hoặc hết nước đi (hòa cờ).
+        if not generated_moves: # Nếu không có nước đi hợp lệ nào
+            if self.in_check:
+                self.check_mate = True
+                # print("CHECKMATE determined") # Debug
+            else:
+                self.stale_mate = True
+                # print("STALEMATE determined") # Debug
+        else: # Nếu có nước đi hợp lệ
+            self.check_mate = False
+            self.stale_mate = False
+            
+        return generated_moves
     def get_all_possible_moves(self) -> List[Move]:
         """Generate all possible moves for the current player."""
         moves = []
@@ -255,6 +333,7 @@ class GameState:
         return moves
 
     def _get_pawn_moves(self, r: int, c: int, moves: List[Move]) -> None:
+        """
         piece_pinned = False
         pin_direction = ()
         for i in range(len(self.pins) - 1, -1, -1):
@@ -366,33 +445,190 @@ class GameState:
                                 blocking_piece = True
                     if not attacking_piece or blocking_piece:
                         moves.append(Move((r, c), (r+1, c+1), self.board, is_enpassant_move=True))
-
-    def _get_rook_moves(self, r: int, c: int, moves: List[Move]) -> None:
+    """
+    def _get_pawn_moves(self, r: int, c: int, moves: List[Move]) -> None:
         piece_pinned = False
         pin_direction = ()
         for i in range(len(self.pins) - 1, -1, -1):
             if self.pins[i][0] == r and self.pins[i][1] == c:
                 piece_pinned = True
                 pin_direction = (self.pins[i][2], self.pins[i][3])
-                if self.board[r][c][1] != 'Q':
-                    self.pins.pop(i)
+                # Đã xóa dòng self.pins.pop(i) từ đây
                 break
+        king_row, king_col = (self.white_king_loc if self.white_to_move else self.black_king_loc)
+        if self.white_to_move:
+            # Di chuyển một ô về phía trước
+            if r-1 >= 0 and self.board[r-1][c] == "--" and (not piece_pinned or pin_direction == (-1, 0)):
+                moves.append(Move((r, c), (r-1, c), self.board))
+                # Di chuyển hai ô về phía trước từ vị trí ban đầu
+                if r == 6 and self.board[r-2][c] == "--": # Không cần kiểm tra piece_pinned nữa vì nếu ô đầu tiên bị chặn, sẽ không đến được đây
+                    moves.append(Move((r, c), (r-2, c), self.board))
+            
+            # Bắt quân theo đường chéo
+            if c-1 >= 0: # Bắt quân ở bên trái
+                if r-1 >= 0 and self.board[r-1][c-1][0] == "b" and (not piece_pinned or pin_direction == (-1, -1)):
+                    moves.append(Move((r, c), (r-1, c-1), self.board))
+                elif r-1 >=0 and (r-1, c-1) == self.enpassant_possible: # Bắt tốt qua đường (en passant) bên trái
+                    # Kiểm tra điều kiện ghim phức tạp cho en passant:
+                    # Tốt bắt và tốt bị bắt phải cùng hàng. Vua cũng phải cùng hàng đó.
+                    # Giữa vua và tốt bắt không được có quân nào.
+                    # Sau khi tốt bắt di chuyển, không có quân nào khác chiếu vua dọc theo hàng đó.
+                    can_en_passant = False
+                    if king_row == r: # Vua cùng hàng với tốt sẽ thực hiện en passant
+                        # Kiểm tra xem có quân nào nằm giữa vua và tốt bắt (cột c) không
+                        # và có quân nào của đối phương (Xe hoặc Hậu) có thể chiếu vua sau khi tốt di chuyển không
+                        blocking_piece_between_king_and_pawn = False
+                        for k_col in range(min(king_col, c) + 1, max(king_col, c)):
+                            if self.board[r][k_col] != "--":
+                                blocking_piece_between_king_and_pawn = True
+                                break
+                        
+                        if not blocking_piece_between_king_and_pawn:
+                            # Tạm thời thực hiện nước đi en passant để kiểm tra xem vua có bị chiếu không
+                            self.board[r][c] = "--" # Tốt di chuyển
+                            self.board[r][c-1] = "--" # Tốt đối phương bị bắt
+                            self.board[r-1][c-1] = "wp" # Tốt đến vị trí mới
+                            
+                            in_check_after_enpassant, _, _ = self.check_for_pins_and_checks() # Kiểm tra vua có bị chiếu không
+                            
+                            # Hoàn tác nước đi tạm thời
+                            self.board[r][c] = "wp"
+                            self.board[r][c-1] = "bp" # Giả sử tốt đen bị bắt
+                            self.board[r-1][c-1] = "--"
+                            
+                            if not in_check_after_enpassant:
+                                can_en_passant = True
+                    else: # Vua không cùng hàng, en passant không làm lộ vua trên hàng đó
+                        can_en_passant = True
+
+                    if can_en_passant and (not piece_pinned or pin_direction == (-1,-1)): # Tốt không bị ghim hoặc ghim đúng hướng
+                         moves.append(Move((r,c), (r-1,c-1), self.board, is_enpassant_move=True))
+
+            if c+1 <= 7: # Bắt quân ở bên phải
+                if r-1 >= 0 and self.board[r-1][c+1][0] == "b" and (not piece_pinned or pin_direction == (-1, 1)):
+                    moves.append(Move((r, c), (r-1, c+1), self.board))
+                elif r-1 >=0 and (r-1, c+1) == self.enpassant_possible: # Bắt tốt qua đường (en passant) bên phải
+                    can_en_passant = False
+                    if king_row == r:
+                        blocking_piece_between_king_and_pawn = False
+                        for k_col in range(min(king_col, c) + 1, max(king_col, c)):
+                            if self.board[r][k_col] != "--":
+                                blocking_piece_between_king_and_pawn = True
+                                break
+                        if not blocking_piece_between_king_and_pawn:
+                            self.board[r][c] = "--"
+                            self.board[r][c+1] = "--"
+                            self.board[r-1][c+1] = "wp"
+                            in_check_after_enpassant, _, _ = self.check_for_pins_and_checks()
+                            self.board[r][c] = "wp"
+                            self.board[r][c+1] = "bp"
+                            self.board[r-1][c+1] = "--"
+                            if not in_check_after_enpassant:
+                                can_en_passant = True
+                    else:
+                        can_en_passant = True
+                    
+                    if can_en_passant and (not piece_pinned or pin_direction == (-1,1)):
+                        moves.append(Move((r,c), (r-1,c+1), self.board, is_enpassant_move=True))
+        else:  # Lượt của quân đen
+            # Di chuyển một ô về phía trước
+            if r+1 <= 7 and self.board[r+1][c] == "--" and (not piece_pinned or pin_direction == (1, 0)):
+                moves.append(Move((r, c), (r+1, c), self.board))
+                # Di chuyển hai ô về phía trước từ vị trí ban đầu
+                if r == 1 and self.board[r+2][c] == "--":
+                    moves.append(Move((r, c), (r+2, c), self.board))
+
+            # Bắt quân theo đường chéo
+            if c-1 >= 0: # Bắt quân ở bên trái (theo hướng của quân đen)
+                if r+1 <=7 and self.board[r+1][c-1][0] == "w" and (not piece_pinned or pin_direction == (1, -1)):
+                    moves.append(Move((r, c), (r+1, c-1), self.board))
+                elif r+1 <=7 and (r+1, c-1) == self.enpassant_possible: # Bắt tốt qua đường (en passant)
+                    can_en_passant = False
+                    if king_row == r:
+                        blocking_piece_between_king_and_pawn = False
+                        for k_col in range(min(king_col, c) + 1, max(king_col, c)):
+                            if self.board[r][k_col] != "--":
+                                blocking_piece_between_king_and_pawn = True
+                                break
+                        if not blocking_piece_between_king_and_pawn:
+                            self.board[r][c] = "--"
+                            self.board[r][c-1] = "--"
+                            self.board[r+1][c-1] = "bp"
+                            in_check_after_enpassant, _, _ = self.check_for_pins_and_checks()
+                            self.board[r][c] = "bp"
+                            self.board[r][c-1] = "wp" 
+                            self.board[r+1][c-1] = "--"
+                            if not in_check_after_enpassant:
+                                can_en_passant = True
+                    else:
+                        can_en_passant = True
+
+                    if can_en_passant and (not piece_pinned or pin_direction == (1,-1)):
+                        moves.append(Move((r,c), (r+1, c-1), self.board, is_enpassant_move=True))
+
+            if c+1 <= 7: # Bắt quân ở bên phải (theo hướng của quân đen)
+                if r+1 <=7 and self.board[r+1][c+1][0] == "w" and (not piece_pinned or pin_direction == (1, 1)):
+                    moves.append(Move((r, c), (r+1, c+1), self.board))
+                elif r+1 <=7 and (r+1, c+1) == self.enpassant_possible: # Bắt tốt qua đường (en passant)
+                    can_en_passant = False
+                    if king_row == r:
+                        blocking_piece_between_king_and_pawn = False
+                        for k_col in range(min(king_col, c) + 1, max(king_col, c)):
+                            if self.board[r][k_col] != "--":
+                                blocking_piece_between_king_and_pawn = True
+                                break
+                        if not blocking_piece_between_king_and_pawn:
+                            self.board[r][c] = "--"
+                            self.board[r][c+1] = "--"
+                            self.board[r+1][c+1] = "bp"
+                            in_check_after_enpassant, _, _ = self.check_for_pins_and_checks()
+                            self.board[r][c] = "bp"
+                            self.board[r][c+1] = "wp"
+                            self.board[r+1][c+1] = "--"
+                            if not in_check_after_enpassant:
+                                can_en_passant = True
+                    else:
+                        can_en_passant = True
+                    
+                    if can_en_passant and (not piece_pinned or pin_direction == (1,1)):
+                        moves.append(Move((r,c), (r+1,c+1), self.board, is_enpassant_move=True))                    
+
+    def _get_rook_moves(self, r: int, c: int, moves: List[Move]) -> None:
+        piece_pinned = False
+        pin_direction = ()
+        # Kiểm tra xem quân Xe này có bị ghim không
+        # QUAN TRỌNG: Không được xóa (pop) phần tử khỏi self.pins ở đây
+        for i in range(len(self.pins) - 1, -1, -1):
+            if self.pins[i][0] == r and self.pins[i][1] == c:
+                piece_pinned = True
+                pin_direction = (self.pins[i][2], self.pins[i][3])
+                # Đã xóa dòng: if self.board[r][c][1] != 'Q': self.pins.pop(i)
+                break
+        
         enemy_color = 'b' if self.white_to_move else 'w'
-        for d in straightDirections:
-            for i in range(1, 8):
+        
+        # Các hướng di chuyển của quân Xe (thẳng)
+        # straightDirections được giả định là đã định nghĩa, ví dụ: ((-1, 0), (1, 0), (0, -1), (0, 1))
+        for d in straightDirections: # Duyệt qua các hướng: lên, xuống, trái, phải
+            for i in range(1, 8): # Di chuyển tối đa 7 ô theo mỗi hướng
                 end_row = r + d[0] * i
                 end_col = c + d[1] * i
-                if 0 <= end_row < 8 and 0 <= end_col < 8:
-                    if not piece_pinned or pin_direction in (d, (-d[0], -d[1])):
-                        end_piece = self.board[end_row][end_col]
-                        if end_piece == "--":
+                
+                if 0 <= end_row < 8 and 0 <= end_col < 8: # Kiểm tra ô đích có nằm trong bàn cờ không
+                    # Nếu quân Xe không bị ghim, HOẶC nếu bị ghim nhưng di chuyển dọc theo đường ghim
+                    if not piece_pinned or pin_direction == d or pin_direction == (-d[0], -d[1]):
+                        end_piece = self.board[end_row][end_col] # Quân cờ ở ô đích
+                        
+                        if end_piece == "--":  # Ô trống
                             moves.append(Move((r, c), (end_row, end_col), self.board))
-                        elif end_piece[0] == enemy_color:
+                        elif end_piece[0] == enemy_color:  # Ô có quân địch
                             moves.append(Move((r, c), (end_row, end_col), self.board))
-                            break
-                        else:
-                            break
-                else:
+                            break  # Không thể đi xuyên qua quân địch
+                        else:  # Ô có quân mình
+                            break  # Không thể đi vào ô có quân mình
+                    else: # Bị ghim và cố gắng di chuyển ra khỏi đường ghim -> không được phép
+                        break 
+                else:  # Ra ngoài bàn cờ
                     break
 
     def _get_knight_moves(self, r: int, c: int, moves: List[Move]) -> None:
@@ -400,7 +636,7 @@ class GameState:
         for i in range(len(self.pins) - 1, -1, -1):
             if self.pins[i][0] == r and self.pins[i][1] == c:
                 piece_pinned = True
-                self.pins.pop(i)
+
                 break
         ally_color = 'w' if self.white_to_move else 'b'
         for d in knightDirections:
@@ -415,28 +651,39 @@ class GameState:
     def _get_bishop_moves(self, r: int, c: int, moves: List[Move]) -> None:
         piece_pinned = False
         pin_direction = ()
+        # Kiểm tra xem quân Tượng này có bị ghim không
+        # QUAN TRỌNG: Không được xóa (pop) phần tử khỏi self.pins ở đây
         for i in range(len(self.pins) - 1, -1, -1):
             if self.pins[i][0] == r and self.pins[i][1] == c:
                 piece_pinned = True
                 pin_direction = (self.pins[i][2], self.pins[i][3])
-                self.pins.pop(i)
+                # Đã xóa dòng self.pins.pop(i) từ đây
                 break
+        
         enemy_color = 'b' if self.white_to_move else 'w'
-        for d in diagonalDirections:
-            for i in range(1, 8):
+        
+        # Các hướng di chuyển của quân Tượng (chéo)
+        # diagonalDirections được giả định là đã định nghĩa, ví dụ: ((-1, -1), (-1, 1), (1, -1), (1, 1))
+        for d in diagonalDirections: # Duyệt qua các hướng chéo
+            for i in range(1, 8): # Di chuyển tối đa 7 ô theo mỗi hướng
                 end_row = r + d[0] * i
                 end_col = c + d[1] * i
-                if 0 <= end_row < 8 and 0 <= end_col < 8:
-                    if not piece_pinned or pin_direction in (d, (-d[0], -d[1])):
-                        end_piece = self.board[end_row][end_col]
-                        if end_piece == "--":
+                
+                if 0 <= end_row < 8 and 0 <= end_col < 8: # Kiểm tra ô đích có nằm trong bàn cờ không
+                    # Nếu quân Tượng không bị ghim, HOẶC nếu bị ghim nhưng di chuyển dọc theo đường ghim
+                    if not piece_pinned or pin_direction == d or pin_direction == (-d[0], -d[1]):
+                        end_piece = self.board[end_row][end_col] # Quân cờ ở ô đích
+                        
+                        if end_piece == "--":  # Ô trống
                             moves.append(Move((r, c), (end_row, end_col), self.board))
-                        elif end_piece[0] == enemy_color:
+                        elif end_piece[0] == enemy_color:  # Ô có quân địch
                             moves.append(Move((r, c), (end_row, end_col), self.board))
-                            break
-                        else:
-                            break
-                else:
+                            break  # Không thể đi xuyên qua quân địch
+                        else:  # Ô có quân mình
+                            break  # Không thể đi vào ô có quân mình
+                    else: # Bị ghim và cố gắng di chuyển ra khỏi đường ghim -> không được phép
+                        break
+                else:  # Ra ngoài bàn cờ
                     break
 
     def _get_queen_moves(self, r: int, c: int, moves: List[Move]) -> None:

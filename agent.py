@@ -37,7 +37,7 @@ class ChessDQN(nn.Module):
 # Replay Buffer for Experience Replay
 # ----------------------------
 class ReplayBuffer:
-    def __init__(self, capacity=10000):
+    def __init__(self, capacity=1000000):
         self.capacity = capacity
         self.buffer = deque(maxlen=capacity)
     
@@ -66,7 +66,7 @@ class DQNAgent:
         self.update_target()  # Initialize target network
         self.steps_done = 0
         if loading:
-            self.policy_net.load_state_dict(torch.load("chess_dqn_model.pth"))
+            self.policy_net.load_state_dict(torch.load("chess_dqn_model.pth", map_location=torch.device('cpu')))
     
     def update_target(self):
         """Copy the policy network weights into the target network."""
@@ -168,7 +168,7 @@ def train_dqn(num_episodes=1000, batch_size=64, target_update=10,
     env = ChessEnv()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     agent = DQNAgent(device=device)
-    replay_buffer = ReplayBuffer(capacity=100)
+    replay_buffer = ReplayBuffer(capacity=100000)
     epsilon = epsilon_start
     episode_rewards = []
     
@@ -224,6 +224,6 @@ class MinimaxAgent:
 # Main Entry Point
 # ----------------------------
 if __name__ == "__main__":
-    trained_agent, rewards = train_dqn(num_episodes=2000)
+    trained_agent, rewards = train_dqn(num_episodes=1)
     # Optionally, save the model
     torch.save(trained_agent.policy_net.state_dict(), "chess_dqn_model.pth")

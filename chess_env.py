@@ -42,18 +42,18 @@ class ChessEnv:
         
         - uncomment de xem
         """
-        # board = []
-        # for row in self.game.board:
-        #     row_squares = []
-        #     for square in row:
-        #         row_squares.append(square)
-        #     board.append(row_squares)
+        board = []
+        for row in self.game.board:
+            row_squares = []
+            for square in row:
+                row_squares.append(square)
+            board.append(row_squares)
         
-        # # In bàn cờ dưới dạng lưới 8x8
-        # print("\nChess Board:")
-        # for i, row in enumerate(board):
-        #     print(f"{' '.join(f'{square:>2}' for square in row)} ")
-        # print(f"Turn: {'White' if self.game.white_to_move else 'Black'}\n")
+        # In bàn cờ dưới dạng lưới 8x8
+        print("\nChess Board:")
+        for i, row in enumerate(board):
+            print(f"{' '.join(f'{square:>2}' for square in row)} ")
+        print(f"Turn: {'White' if self.game.white_to_move else 'Black'}\n")
 
         return np.array(state, dtype=np.float32)
     
