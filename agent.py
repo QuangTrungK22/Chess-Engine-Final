@@ -5,9 +5,14 @@ import numpy as np # type: ignore
 import random
 from collections import deque
 from chess_env import ChessEnv  # Import the modified chess environment with dense rewards
-from chess_engine import Move
-
+from chess_engine import Move, GameState
+import wandb
+import algorithm_utils as algo
 from tqdm import tqdm
+from dotenv import load_dotenv
+import os 
+
+load_dotenv()
 # ----------------------------
 # Neural Network for DQN
 # ----------------------------
@@ -56,21 +61,22 @@ class ReplayBuffer:
 # DQN Agent
 # ----------------------------
 class DQNAgent:
-    def __init__(self, input_dim=833, output_dim=4096, hidden_dims=[512,256],
-                 lr=1e-4, gamma=0.99, device=torch.device("cpu"), loading=False):
+    def __init__(self, input_dim=833, output_dim=4096, hidden_dims=[1024,1024],
+                 lr=1e-5, gamma=0.99, device=torch.device("cpu"), loading="chess_dqn_model_400.pth"):
         self.device = device
         self.policy_net = ChessDQN(input_dim, output_dim, hidden_dims).to(device)
         self.target_net = ChessDQN(input_dim, output_dim, hidden_dims).to(device)
         self.optimizer = optim.Adam(self.policy_net.parameters(), lr=lr)
         self.gamma = gamma
-        self.update_target()  # Initialize target network
         self.steps_done = 0
         if loading:
-            self.policy_net.load_state_dict(torch.load("chess_dqn_model.pth", map_location=torch.device('cpu')))
-    
-    def update_target(self):
+            self.policy_net.load_state_dict(torch.load(loading, map_location=torch.device('cpu')))
+        self.update_target()  # Initialize target network
+        self.loss_fn = nn.SmoothL1Loss()
+    def update_target(self, tau=0.005):
         """Copy the policy network weights into the target network."""
-        self.target_net.load_state_dict(self.policy_net.state_dict())
+        for target_param, param in zip(self.target_net.parameters(), self.policy_net.parameters()):
+            target_param.data.copy_(tau * param.data + (1.0 - tau) * target_param.data)
     
     def get_action(self, state, valid_actions, epsilon, current_valid_moves=None):
         """
@@ -88,6 +94,7 @@ class DQNAgent:
         else:
             with torch.no_grad():
                 q_values = self.policy_net(state_tensor).cpu().data.numpy().flatten()
+                wandb.log({"q_value/max": np.max(q_values), "q_value/min": np.min(q_values)})
             # Only consider valid actions
             valid_q = [(action, q_values[action]) for action in valid_actions]
             best_action = max(valid_q, key=lambda x: x[1])[0]
@@ -137,7 +144,7 @@ class DQNAgent:
 
 
 
-    def optimize_model(self, replay_buffer, batch_size):
+    def optimize_model(self, replay_buffer: ReplayBuffer, batch_size):
         if len(replay_buffer) < batch_size:
             return None
         states, actions, rewards, next_states, dones = replay_buffer.sample(batch_size)
@@ -151,42 +158,69 @@ class DQNAgent:
         current_q = self.policy_net(states).gather(1, actions)
         # Compute max Q-value for next state from target network
         with torch.no_grad():
-            max_next_q = self.target_net(next_states).max(1)[0].unsqueeze(1)
-            target_q = rewards + self.gamma * max_next_q * (1 - dones)
+            next_q_policy = self.policy_net(next_states)
+            next_actions = torch.argmax(next_q_policy, dim=1, keepdim=True)
+            next_q_target = self.target_net(next_states).gather(1, next_actions)
+            target_q = rewards + self.gamma * next_q_target * (1 - dones)
         
-        loss = nn.MSELoss()(current_q, target_q)
+        loss = self.loss_fn(current_q, target_q)
+        loss = torch.nan_to_num(loss)
         self.optimizer.zero_grad()
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.policy_net.parameters(), max_norm=1.0)
         self.optimizer.step()
         return loss.item()
 
 # ----------------------------
 # Training Loop
 # ----------------------------
-def train_dqn(num_episodes=1000, batch_size=64, target_update=10,
-              epsilon_start=1.0, epsilon_end=0.1, epsilon_decay=0.995):
+def train_dqn(num_episodes=1000, batch_size=64, target_update=5, target_save = 400,
+              epsilon_start=1.0, epsilon_end=0.2, epsilon_decay=0.999, lr = 1e-5):
     env = ChessEnv()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    agent = DQNAgent(device=device)
+    agent = DQNAgent(device=device, loading=None, hidden_dims=[512, 1024])
     replay_buffer = ReplayBuffer(capacity=100000)
     epsilon = epsilon_start
     episode_rewards = []
+    MAX_MOVES = 1e5
     
-    for i_episode in tqdm(range(num_episodes)):
+    wandb.login(key=os.getenv('WANDB_KEY'))
+    wandb.init(
+    project="chess-dqn",  # change to your project name
+    name="old_sc_512_1024",
+    config={
+        "lr": 1e-5,
+        "gamma": 0.99,
+        "batch_size": batch_size,
+        "epsilon_start": 1.0,
+        "epsilon_end": 0.1,
+        "epsilon_decay": 0.995,
+        "target_update": 5
+    }
+    )
+    
+    for i_episode in range(int(num_episodes)):
         state = env.reset()
         total_reward = 0.0
         done = False
-        
+        losses = []
+        rewards = []
+        move_count = 0
         # Get valid actions for the initial state from the game engine
         valid_moves = env.game.get_valid_moves()
         valid_actions = [env.move_to_action_index(m) for m in valid_moves]
-        while not done:
+        while not done and move_count < MAX_MOVES:
             action = agent.get_action(state, valid_actions, epsilon)
+            move_count += 1 
             """
             Vấn đề nằm ở env.step(action) khi không kết thúc được trò chơi với biến done = True
             """
             next_state, reward, done, info = env.step(action)
             total_reward += reward
+            rewards.append(reward)
+            # wandb.log({"action_reward": reward})
+            wandb.log({"reward_hist": wandb.Histogram(rewards)})
+
             replay_buffer.push(state, action, reward, next_state, done)
             state = next_state
             
@@ -194,36 +228,106 @@ def train_dqn(num_episodes=1000, batch_size=64, target_update=10,
             valid_moves = env.game.get_valid_moves()
             valid_actions = [env.move_to_action_index(m) for m in valid_moves]
 
-            agent.optimize_model(replay_buffer, batch_size)
-            
-        
+            loss = agent.optimize_model(replay_buffer, batch_size)
+            if loss is not None:
+                losses.append(loss)
+
+        if move_count >= MAX_MOVES and not done:
+            print(f"[WARN] End the episode {i_episode} without win")
+        mean_loss = np.mean(losses)
         epsilon = max(epsilon_end, epsilon * epsilon_decay)
         episode_rewards.append(total_reward)
         if i_episode % target_update == 0:
             agent.update_target()
-        if i_episode % 10 == 0:
-            print(f"Episode {i_episode}: Total Reward = {total_reward:.2f}, Epsilon = {epsilon:.2f}")
-    
+        if i_episode % target_update == 0:
+            print(f"Episode {i_episode}: Total Reward = {total_reward:.2f}, Epsilon = {epsilon:.2f}, Loss = {np.log(mean_loss)}")
+            wandb.log({
+            "total_reward": total_reward,
+            "mean_loss": mean_loss,
+            })
+            results = evaluate_agent(agent, num_games=10)
+            wandb.log({
+            "eval/win": results["win"],
+            "eval/loss": results["loss"],
+            "eval/draw": results["draw"],
+            "eval/illegal_move": results["illegal_move"],
+            "eval/episode": i_episode
+            })
+        if i_episode % target_save == 0:
+            torch.save(agent.policy_net.state_dict(), f"chess_dqn_model_{i_episode}.pth")
     return agent, episode_rewards
 
+@torch.no_grad()
+def evaluate_agent(agent: DQNAgent, num_games=10):
+    env = ChessEnv()
+    random_agent = RandomAgent()
+    results = {"win": 0, "draw": 0, "loss": 0, "illegal_move": 0}
+
+    for i in range(num_games):
+        state = env.reset()
+        done = False
+        MAX_MOVE = 1e4
+        count_move = 0
+
+        agent_color = "white" if i % 2 == 0 else "black"
+        current_player = "white"
+
+        valid_moves = env.game.get_valid_moves()
+        valid_actions = [env.move_to_action_index(m) for m in valid_moves]
+
+        while not done and count_move < MAX_MOVE:
+            if current_player == agent_color:
+                action = agent.get_action(state, valid_actions, epsilon=0.0)
+            else:
+                action = random_agent.get_action(valid_actions)
+
+            count_move += 1
+            state, reward, done, info = env.step(action)
+
+            valid_moves = env.game.get_valid_moves()
+            valid_actions = [env.move_to_action_index(m) for m in valid_moves]
+
+            if done:
+                if info.get("win", False):
+                    if agent_color == info["color_win"]:
+                        results["win"] += 1
+                    elif agent_color != info["win"]:
+                        results["loss"] += 1
+                    print(f" info {info}, agent_color: {agent_color}")
+                    # env.print_board()  
+                elif info.get("draw", False):
+                    results["draw"] += 1
+                    
+                elif info.get("illegal_move", False):
+                    results["illegal_move"] += 1
+                else:
+                    print("Unrecognized end condition:", info)
+                break
+
+            current_player = "black" if current_player == "white" else "white"
+
+        if count_move >= MAX_MOVE:
+            print(f"[WARN] Game stuck after {MAX_MOVE} moves")
+
+    print(f"Evaluation vs RandomAgent: {results}")
+    return results
+
+
 class RandomAgent:
-    def select_action(self, valid_actions):
+    def get_action(self, valid_actions):
         return random.choice(valid_actions)
 
 class MinimaxAgent:
     def __init__(self, depth=2):
         self.depth = depth
 
-    def select_action(self, game):
-        valid_moves = game.get_valid_moves()
-        if valid_moves:
-            return game.move_to_action_index(valid_moves[0])
-        else:
-            return None
+    def get_action(self, valid_moves, state: ChessEnv):
+        move = algo.find_best_move_minimax(gs = state.game, valid_moves=valid_moves, depth=self.depth)
+        return move
+
 # ----------------------------
 # Main Entry Point
 # ----------------------------
 if __name__ == "__main__":
-    trained_agent, rewards = train_dqn(num_episodes=1)
+    trained_agent, rewards = train_dqn(num_episodes=1e5)
     # Optionally, save the model
-    torch.save(trained_agent.policy_net.state_dict(), "chess_dqn_model.pth")
