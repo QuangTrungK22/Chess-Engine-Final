@@ -224,6 +224,6 @@ class MinimaxAgent:
 # Main Entry Point
 # ----------------------------
 if __name__ == "__main__":
-    trained_agent, rewards = train_dqn(num_episodes=1)
+    trained_agent, rewards = train_dqn(num_episodes=100)
     # Optionally, save the model
     torch.save(trained_agent.policy_net.state_dict(), "chess_dqn_model.pth")

@@ -83,12 +83,13 @@ class ChessEnv:
         """
         valid_moves = self.game.get_valid_moves()
         valid_moves_map = {self.move_to_action_index(m): m for m in valid_moves}
-        
+        info = {}
         if action_idx not in valid_moves_map:
             # Illegal move penalty
+            info["illegal_move"] = True
             reward = -0.5
             done = False
-            return self._get_state_vector(), reward, done, {"illegal_move": True}
+            return self._get_state_vector(), reward, done, info
         
         # Compute the board evaluation score before the move
         old_score = algorithm_utils.score_board(self.game)
@@ -133,13 +134,15 @@ class ChessEnv:
         if self.game.check_mate:
             print("Checkmate!")
             # Add a terminal bonus: +1 for win (from the perspective of the mover), -1 for loss
-            reward += 50 if not self.game.white_to_move else +20
+            reward += 50 if not self.game.white_to_move else +50
             done = True
 
         elif self.game.stale_mate or not is_there_any_chess_piece_not_king():
             print("Stalemate!")
-            reward -= 1000
+            reward += -10
             done = True
+        elif info.get("illegal_move"): # Đã có sẵn trong code của bạn
+            current_reward = -0.5 # Giữ nguyên hoặc điều chỉnh
         else:
             done = False
         
