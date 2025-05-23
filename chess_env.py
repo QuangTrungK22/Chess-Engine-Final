@@ -92,6 +92,7 @@ class ChessEnv:
             reward = -1.0
             done = False
             return self._get_state_vector(), reward, done, info.update({"illegal_move": True})
+
         
         # Compute the board evaluation score before the move
         old_score = algorithm_utils.score_board(self.game)
@@ -137,7 +138,6 @@ class ChessEnv:
         if self.game.check_mate:
             # print("Checkmate!")
             # Add a terminal bonus: +1 for win (from the perspective of the mover), -1 for loss
-            reward += 1.0
             done = True
             info.update(
                 {
@@ -152,6 +152,8 @@ class ChessEnv:
             info.update(
                 {"draw": True}
             )
+            reward += -10
+            done = True
         else:
             done = False
             
