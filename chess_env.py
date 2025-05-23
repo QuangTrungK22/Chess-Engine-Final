@@ -42,21 +42,24 @@ class ChessEnv:
         
         - uncomment de xem
         """
+        
+        
+        # In bàn cờ dưới dạng lưới 8x8
+
+        return np.array(state, dtype=np.float32)
+    
+    def print_board(self):
         board = []
         for row in self.game.board:
             row_squares = []
             for square in row:
                 row_squares.append(square)
             board.append(row_squares)
-        
-        # In bàn cờ dưới dạng lưới 8x8
         print("\nChess Board:")
         for i, row in enumerate(board):
             print(f"{' '.join(f'{square:>2}' for square in row)} ")
         print(f"Turn: {'White' if self.game.white_to_move else 'Black'}\n")
 
-        return np.array(state, dtype=np.float32)
-    
     def move_to_action_index(self, move: Move) -> int:
         """
         Encodes a move as an integer in [0, 4095] based on starting and ending squares.
@@ -86,10 +89,10 @@ class ChessEnv:
         info = {}
         if action_idx not in valid_moves_map:
             # Illegal move penalty
-            info["illegal_move"] = True
-            reward = -0.5
+            reward = -1.0
             done = False
-            return self._get_state_vector(), reward, done, info
+            return self._get_state_vector(), reward, done, info.update({"illegal_move": True})
+
         
         # Compute the board evaluation score before the move
         old_score = algorithm_utils.score_board(self.game)
@@ -108,7 +111,8 @@ class ChessEnv:
         else:
             # Black just moved; reward is the improvement for Black (old - new)
             reward = old_score - new_score
-        
+        NORMALIZATION_FACTOR = 137
+        reward = np.clip(reward / NORMALIZATION_FACTOR, -1.0, 1.0)
         """
         # khi mô phỏng lại để huấn luyện mô hình thì có 2 trường hợp xảy ra
         # 1. Trường hợp 1: Không có nước đi nào hợp lệ
@@ -132,19 +136,26 @@ class ChessEnv:
         """
         # Check terminal conditions (if game is over, optionally add terminal bonus)
         if self.game.check_mate:
-            print("Checkmate!")
+            # print("Checkmate!")
             # Add a terminal bonus: +1 for win (from the perspective of the mover), -1 for loss
-            reward += 50 if not self.game.white_to_move else +50
             done = True
-
+            info.update(
+                {
+                    "win": True,
+                    "color_win": "black" if self.game.white_to_move else "white" 
+                }
+            )
         elif self.game.stale_mate or not is_there_any_chess_piece_not_king():
-            print("Stalemate!")
+            # print("Stalemate!")
+            reward -= 0.5
+            done = True
+            info.update(
+                {"draw": True}
+            )
             reward += -10
             done = True
-        elif info.get("illegal_move"): # Đã có sẵn trong code của bạn
-            current_reward = -0.5 # Giữ nguyên hoặc điều chỉnh
         else:
             done = False
-        
-        return self._get_state_vector(), reward, done, {}
+            
+        return self._get_state_vector(), reward, done, info
 
